@@ -1,0 +1,4 @@
+log/*.txt
+files/*.gdb
+*.pyc
+*.bak
