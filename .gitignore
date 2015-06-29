@@ -2,3 +2,5 @@ log/*.txt
 files/*.gdb
 *.pyc
 *.bak
+odata_update.cmd
+odata_update.trc

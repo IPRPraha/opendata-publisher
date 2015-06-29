@@ -25,7 +25,13 @@ Upravil:
 	   
 	09.04.2015 Matěj
 		-slovník a zpracovávané vrstvy uloženy v separátních json souborech v adresáři conf
+
+	23.06.2015 Matěj
+		-emaily dány do separátního souboru v conf
+		
 """
+
+
 
 import requests
 from xml.etree import ElementTree
@@ -44,47 +50,51 @@ import json
 class LicenseError(Exception):
     pass
 
+class ListError(Exception):
+    def __init__(self, value):
+        self.value = value
+    def __str__(self):
+        return repr(self.value)
+
 def bigAtom(path,dodelavane=[]):
     chyba=False
-	#načtení seznamu vrstev
+	
     with io.open('conf\\od_vrstvy.json', 'r', encoding='utf8') as json_file:
         data=json_file.read()
         vrstvy_name=json.loads(data)
-	#slovník definující tématické sady
+	
     with io.open('conf\\slovnik.json', 'r', encoding='utf8') as json_file:
 		data=json_file.read()
 		slovnik=json.loads(data)
-
+		
+	
     slovnik_docID={}
-    
-	#list obsahující seznam vrstev
-	vrstvy=[]
+    vrstvy=[]
+    nejsou_od=[]
     for v in vrstvy_name:
         vrstvy.append(v[0])
         
-    #načtení objektu, který obsahuje datum poslední aktualizace každé vrstvy
+    #loading object which store last update of layers. If last update differs from update date in metadata, layer has to be updated.
     file2=open('vrstvy.obj','rb')
     data=pickle.load(file2)
     file2.close()
+    
+    
 
-    #nahrazeni nazvu IDčkem
+    #nahrazeni nazvuy IDčkem
     vrstvy_ext=copy.deepcopy(vrstvy_name)
-    #metadatový seznam všech vrstev
-	http='http://app.iprpraha.cz/geoportal/csw?REQUEST=GetRecords&service=CSW&version=2.0.2&ElementSetName=full&resultType=results&maxRecords=5000'
+    http='http://app.iprpraha.cz/geoportal/csw?REQUEST=GetRecords&service=CSW&version=2.0.2&ElementSetName=full&resultType=results&maxRecords=5000'
     response = requests.request('GET', http)
     tree = ElementTree.fromstring(response.content)
     records=tree.getchildren()[1].getchildren()
-    
-	#prozkoumej všechny vrstvy v katalogu, pokud mezi nimi najdeš vrstvu definovanou 
-	for record in records:
+    for record in records:
         for identi in record.iter('{http://purl.org/dc/elements/1.1/}identifier'):
             if 'DocID' in identi.attrib["scheme"]:
                 docID=identi.text
         http2='http://app.iprpraha.cz/geoportal/rest/document?id='+docID
         response2 = requests.request('GET', http2)
         tree2 = ElementTree.fromstring(response2.content)
-        
-		for distributionInfo in tree2.iter('{http://www.isotc211.org/2005/gmd}distributionInfo'):
+        for distributionInfo in tree2.iter('{http://www.isotc211.org/2005/gmd}distributionInfo'):
             for characterString in distributionInfo.iter('{http://www.isotc211.org/2005/gco}CharacterString'):
                 if characterString.text=='opendata':
                     for tag in tree2.iter('{http://www.isotc211.org/2005/gmd}identifier'):
@@ -92,20 +102,22 @@ def bigAtom(path,dodelavane=[]):
                                 RS_Identifier=tag2.getchildren()[0].getchildren()[0].text
                                 slozka_cur=RS_Identifier.split(".")[0].split("-")[2]
                                 if slozka_cur=="MAP":
-                                    slozka_cur="MAP_CUR"  
-                                
+                                    slozka_cur="MAP_CUR"                                 
                                 vrstvaFC=RS_Identifier.split(".")[1]
                                 if vrstvaFC[-2:]=='FC':
                                     vrstva=vrstvaFC[:-3]
                                 else:
                                     vrstva=vrstvaFC
-                            
-                    index=vrstvy.index(vrstva)
-                    if index>-1:
-                        vrstvy_ext[index][0]=docID
-                        slovnik_docID[docID]=vrstva
-                        if vrstva in dodelavane:
-                            dodelavane[dodelavane.index(vrstva)]=docID
+                    if vrstva in vrstvy:        
+                        index=vrstvy.index(vrstva)
+                        if index>-1:
+                            vrstvy_ext[index][0]=docID
+                            slovnik_docID[docID]=vrstva
+                            if vrstva in dodelavane:
+                                dodelavane[dodelavane.index(vrstva)]=docID
+                    else:
+                        chyba=True
+                        nejsou_od.append(vrstva)
     vrstvy=[]
     for v in vrstvy_ext:
         vrstvy.append(v[0])
@@ -174,7 +186,7 @@ def bigAtom(path,dodelavane=[]):
                 data[jmeno_vrstvy]=modi_date
 
             
-            if docID in dodelavane:# or docID=="{6DE021B5-05C0-4D12-869D-3A20476EE08E}":
+            if docID in dodelavane:
                 print docID
                 print path
                 try: 
@@ -229,6 +241,9 @@ def bigAtom(path,dodelavane=[]):
     print chybne
     if chybne:
         chyba=True
+    if nejsou_od:
+        raise ListError(nejsou_od)
+        
     return chyba
 	
 if __name__ == "__main__":
@@ -248,12 +263,19 @@ if __name__ == "__main__":
         chyba=bigAtom(os.path.dirname(os.path.realpath('__file__')))
 
     except LicenseError:
-        print("nedostupna licence DataInterop")    
+        print("nedostupna licence DataInterop")
+        chyba=True
     
     except arcpy.ExecuteError:
-        msgs = arcpy.GetMessages(2).encode('ascii', 'replace')      #.decode('utf-8')
+        msgs = arcpy.GetMessages(2).encode('ascii', 'replace')
         arcpy.AddError(msgs)
         print '\nARCPY ERRORS:\n\t', msgs
+        chyba=True
+    
+    except ListError,e:
+        print str(e)
+        print "Není v seznamu conf/od_vrstvy.json"
+        chyba=True
 
     except Exception,e:
         print str(e)
@@ -264,5 +286,11 @@ if __name__ == "__main__":
         arcpy.CheckInExtension("DataInteroperability")
         out.close()
         if chyba:
-            py_tools.SendMail.send_mail( 'opendata_update@ipr.praha.eu', 'soukup@ipr.praha.eu', 'chyba aktualizace', 'Chyba v aktualizaci', [fn], server='ex1.ipr.praha.eu', port=None, username=None, password=None, isTls=None )
+            with io.open('conf\\email.json', 'r', encoding='utf8') as json_file:
+                data=json_file.read()
+                emails=json.loads(data)
+                fromEmail=emails[0]
+                toEmail=emails[1]
+                eServer=emails[2]
+            py_tools.SendMail.send_mail( fromEmail, toEmail, 'chyba aktualizace', 'Chyba v aktualizaci', [fn], server=eServer, port=None, username=None, password=None, isTls=None )
             pass
